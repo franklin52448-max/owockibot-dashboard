@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Anti-Squatting Dashboard — owockibot Bounty Board</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:#0d1117; color:#c9d1d9; padding:20px; }
+h1 { color:#39d353; font-size:1.8em; margin-bottom:4px; }
+.subtitle { color:#8b949e; margin-bottom:20px; font-size:0.95em; }
+.stats { display:flex; gap:16px; margin-bottom:24px; flex-wrap:wrap; }
+.stat-card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px 20px; min-width:140px; }
+.stat-card .num { font-size:2em; font-weight:700; }
+.stat-card .label { color:#8b949e; font-size:0.85em; margin-top:4px; }
+.danger .num { color:#f85149; }
+.warn .num { color:#d29922; }
+.ok .num { color:#39d353; }
+.info .num { color:#58a6ff; }
+table { width:100%; border-collapse:collapse; background:#161b22; border-radius:8px; overflow:hidden; border:1px solid #30363d; }
+th { background:#1c2128; color:#8b949e; text-align:left; padding:10px 12px; font-size:0.85em; text-transform:uppercase; letter-spacing:0.5px; }
+td { padding:10px 12px; border-top:1px solid #21262d; font-size:0.9em; }
+tr:hover { background:#1c2128; }
+.badge { display:inline-block; padding:2px 8px; border-radius:12px; font-size:0.75em; font-weight:600; }
+.badge-stale { background:#f8514922; color:#f85149; }
+.badge-warning { background:#d2992222; color:#d29922; }
+.badge-ok { background:#39d35322; color:#39d353; }
+.badge-active { background:#58a6ff22; color:#58a6ff; }
+.mono { font-family:'SF Mono',Consolas,monospace; font-size:0.85em; }
+.refresh-btn { background:#238636; color:#fff; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.9em; margin-bottom:16px; }
+.refresh-btn:hover { background:#2ea043; }
+.error { color:#f85149; background:#f8514911; padding:12px; border-radius:6px; margin-bottom:16px; }
+.report-box { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px; margin-top:24px; }
+.report-box h3 { color:#58a6ff; margin-bottom:8px; }
+.report-box pre { color:#8b949e; font-size:0.85em; white-space:pre-wrap; word-break:break-all; }
+.copy-btn { background:#30363d; color:#c9d1d9; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.8em; margin-left:8px; }
+.copy-btn:hover { background:#484f58; }
+.legend { display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+.legend span { font-size:0.85em; }
+</style>
+</head>
+<body>
+<h1>🛡️ Anti-Squatting Dashboard</h1>
+<p class="subtitle">Monitoring owockibot bounty board for stale claims — bounties claimed >7 days with no submission or comment</p>
+<button class="refresh-btn" onclick="loadData()">↻ Refresh</button>
+<span id="timestamp" style="color:#8b949e;font-size:0.85em;margin-left:8px;"></span>
+<div id="error" style="display:none" class="error"></div>
+<div class="stats" id="stats"></div>
+<div class="legend">
+  <span><span class="badge badge-stale">STALE >7d</span></span>
+  <span><span class="badge badge-warning">AGING 3-7d</span></span>
+  <span><span class="badge badge-active">RECENT <3d</span></span>
+  <span><span class="badge badge-ok">HAS SUBMISSION</span></span>
+</div>
+<table id="table">
+<thead><tr><th>ID</th><th>Title</th><th>Claimer</th><th>Days Claimed</th><th>Submission</th><th>Comments</th><th>Status</th></tr></thead>
+<tbody id="tbody"></tbody>
+</table>
+<div class="report-box">
+  <h3>📋 Sample Report <button class="copy-btn" onclick="copyReport()">Copy</button></h3>
+  <pre id="report">Loading...</pre>
+</div>
+<script>
+const API='https://www.owockibot.xyz/api/bounty-board';
+const STALE_DAYS=7;
+const WARN_DAYS=3;
+let allBounties=[];
+let claimedBounties=[];
+
+async function loadData(){
+  document.getElementById('error').style.display='none';
+  try{
+    const r=await fetch(API);
+    if(!r.ok) throw new Error('API returned '+r.status);
+    allBounties=await r.json();
+    claimedBounties=allBounties.filter(b=>b.status==='claimed');
+    claimedBounties.sort((a,b)=>daysSince(b.updated_at)-daysSince(a.updated_at));
+    render();
+    document.getElementById('timestamp').textContent='Updated: '+new Date().toLocaleString();
+  }catch(e){
+    document.getElementById('error').textContent='Failed to fetch data: '+e.message;
+    document.getElementById('error').style.display='block';
+  }
+}
+
+function daysSince(iso){
+  const d=new Date(iso);
+  const now=new Date();
+  return Math.floor((now-d)/(1000*60*60*24));
+}
+
+function render(){
+  const stale=claimedBounties.filter(b=>daysSince(b.updated_at)>STALE_DAYS&&!b.submission_url);
+  const aging=claimedBounties.filter(b=>{const d=daysSince(b.updated_at);return d>=WARN_DAYS&&d<=STALE_DAYS&&!b.submission_url;});
+  const recent=claimedBounties.filter(b=>daysSince(b.updated_at)<WARN_DAYS&&!b.submission_url);
+  const withSub=claimedBounties.filter(b=>b.submission_url);
+  document.getElementById('stats').innerHTML=`
+    <div class="stat-card danger"><div class="num">${stale.length}</div><div class="label">Stale (>7d, no submission)</div></div>
+    <div class="stat-card warn"><div class="num">${aging.length}</div><div class="label">Aging (3-7d, no submission)</div></div>
+    <div class="stat-card ok"><div class="num">${withSub.length}</div><div class="label">Has Submission</div></div>
+    <div class="stat-card info"><div class="num">${claimedBounties.length}</div><div class="label">Total Claimed</div></div>
+  `;
+  const tbody=document.getElementById('tbody');
+  tbody.innerHTML='';
+  for(const b of claimedBounties){
+    const d=daysSince(b.updated_at);
+    const hasSub=!!b.submission_url;
+    const hasCom=!!(b.comments&&b.comments.length>0);
+    let badge,badgeClass;
+    if(hasSub){badge='Submitted';badgeClass='badge-ok';}
+    else if(d>STALE_DAYS){badge='STALE >'+STALE_DAYS+'d';badgeClass='badge-stale';}
+    else if(d>=WARN_DAYS){badge='Aging '+d+'d';badgeClass='badge-warning';}
+    else{badge='Recent';badgeClass='badge-active';}
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td class="mono">#${b.id}</td><td>${esc(b.title||'')}</td><td class="mono">${b.claimer_address?b.claimer_address.slice(0,6)+'...'+b.claimer_address.slice(-4):'—'}</td><td>${d}d</td><td>${hasSub?'✅ Yes':'❌ No'}</td><td>${hasCom?'💬 '+b.comments.length:'—'}</td><td><span class="badge ${badgeClass}">${badge}</span></td>`;
+    tbody.appendChild(tr);
+  }
+  renderReport(stale,aging,withSub);
+}
+
+function renderReport(stale,aging,withSub){
+  const now=new Date().toISOString();
+  let lines=['OWOCKIBOT ANTI-SQUATTING REPORT','Generated: '+now,'','========================================',''];
+  lines.push('SUMMARY');
+  lines.push('  Total claimed bounties: '+claimedBounties.length);
+  lines.push('  Stale (>7d, no submission): '+stale.length);
+  lines.push('  Aging (3-7d, no submission): '+aging.length);
+  lines.push('  With submission: '+withSub.length);
+  lines.push('');
+  if(stale.length>0){
+    lines.push('STALE CLAIMS (>7 days, no submission):');
+    lines.push('----------------------------------------');
+    for(const b of stale){
+      const d=daysSince(b.updated_at);
+      lines.push('  Bounty #'+b.id+': '+b.title);
+      lines.push('    Claimer: '+b.claimer_address);
+      lines.push('    Days since claim: '+d);
+      lines.push('    Submission: NONE');
+      lines.push('    Comments: '+(b.comments&&b.comments.length?b.comments.length:'0'));
+      lines.push('');
+    }
+  }else{
+    lines.push('No stale claims detected. All clear! ✅');
+    lines.push('');
+  }
+  if(aging.length>0){
+    lines.push('AGING CLAIMS (3-7 days, no submission):');
+    lines.push('----------------------------------------');
+    for(const b of aging){
+      const d=daysSince(b.updated_at);
+      lines.push('  Bounty #'+b.id+': '+b.title);
+      lines.push('    Claimer: '+b.claimer_address);
+      lines.push('    Days since claim: '+d);
+      lines.push('');
+    }
+  }
+  document.getElementById('report').textContent=lines.join('\n');
+}
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+function copyReport(){
+  const t=document.getElementById('report').textContent;
+  navigator.clipboard.writeText(t).then(()=>alert('Report copied!')).catch(()=>{});
+}
+
+loadData();
+</script>
+</body>
+</html>
